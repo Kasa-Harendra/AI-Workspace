@@ -1,0 +1,633 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LangGraph Agentic Executive OS</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <style>
+        :root {
+            --bg: #000000;
+            --surface: #0a0a0a;
+            --surface-hover: #121212;
+            --border: #222222;
+            --border-focus: #444444;
+            --text-primary: #ffffff;
+            --text-secondary: #888888;
+            --text-tertiary: #555555;
+            --accent: #ffffff;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background-color: var(--bg);
+            color: var(--text-primary);
+            line-height: 1.5;
+            padding: 2.5rem;
+            max-width: 1450px;
+            margin: 0 auto;
+        }
+
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding-bottom: 2rem;
+            border-bottom: 1px solid var(--border);
+            margin-bottom: 2.5rem;
+        }
+
+        .title-area h1 {
+            font-size: 1.5rem;
+            font-weight: 600;
+            letter-spacing: -0.03em;
+            color: var(--text-primary);
+            display: flex;
+            align-items: center;
+            gap: 0.6rem;
+        }
+
+        .title-area p {
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+            margin-top: 0.25rem;
+        }
+
+        .run-btn {
+            background-color: var(--text-primary);
+            color: var(--bg);
+            border: 1px solid var(--text-primary);
+            padding: 0.65rem 1.25rem;
+            font-size: 0.875rem;
+            font-weight: 600;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .run-btn:hover {
+            background-color: #e0e0e0;
+            border-color: #e0e0e0;
+        }
+
+        .run-btn:disabled {
+            background-color: var(--text-tertiary);
+            border-color: var(--text-tertiary);
+            cursor: not-allowed;
+        }
+
+        /* Pipeline section */
+        .pipeline-box {
+            background-color: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin-bottom: 2.5rem;
+        }
+
+        .pipeline-header {
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--text-secondary);
+            margin-bottom: 1.25rem;
+            font-weight: 600;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .nodes-grid {
+            display: grid;
+            grid-template-columns: 1fr auto 1fr auto 1.3fr auto 1fr auto 1fr;
+            align-items: center;
+            gap: 0.6rem;
+        }
+
+        .node-item {
+            background-color: var(--bg);
+            border: 1px solid var(--border);
+            padding: 0.85rem;
+            border-radius: 6px;
+            transition: all 0.2s ease;
+        }
+
+        .node-item.active {
+            border-color: var(--text-primary);
+            background-color: var(--surface-hover);
+            box-shadow: 0 0 15px rgba(255,255,255,0.05);
+        }
+
+        .node-item.cond-active {
+            border-color: #ffaa00;
+            background-color: #1a1400;
+        }
+
+        .node-title {
+            font-size: 0.8125rem;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .node-desc {
+            font-size: 0.7rem;
+            color: var(--text-secondary);
+            margin-top: 0.2rem;
+        }
+
+        .arrow-sep {
+            color: var(--text-tertiary);
+            font-size: 1rem;
+            text-align: center;
+        }
+
+        .status-bar {
+            margin-top: 1.25rem;
+            padding-top: 1rem;
+            border-top: 1px solid var(--border);
+            font-size: 0.8125rem;
+            color: var(--text-secondary);
+            display: flex;
+            justify-content: space-between;
+        }
+
+        /* Main Grid */
+        .main-grid {
+            display: grid;
+            grid-template-columns: 1.8fr 1.2fr;
+            gap: 2.5rem;
+        }
+
+        .brief-col {
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+        }
+
+        .section-card {
+            background-color: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 1.5rem;
+        }
+
+        .section-title {
+            font-size: 0.875rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            color: var(--text-primary);
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 0.75rem;
+        }
+
+        .item-list {
+            list-style: none;
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+        }
+
+        .item {
+            background-color: var(--bg);
+            border: 1px solid var(--border);
+            padding: 1rem;
+            border-radius: 6px;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 1rem;
+        }
+
+        .item-content {
+            font-size: 0.875rem;
+            color: var(--text-primary);
+        }
+
+        .item-meta {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            margin-top: 0.35rem;
+        }
+
+        .tag {
+            font-size: 0.6875rem;
+            font-weight: 600;
+            padding: 0.2rem 0.5rem;
+            border-radius: 4px;
+            border: 1px solid var(--border);
+            background-color: var(--surface-hover);
+            color: var(--text-secondary);
+            white-space: nowrap;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .tag.high {
+            color: #ffffff;
+            border-color: #666666;
+            background-color: #222222;
+        }
+
+        .tag.draft {
+            color: #ffffff;
+            border-color: #444444;
+            background-color: #1a1a1a;
+        }
+
+        /* Chat Section */
+        .chat-box {
+            background-color: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            display: flex;
+            flex-direction: column;
+            height: 740px;
+        }
+
+        .chat-header {
+            padding: 1.25rem 1.5rem;
+            border-bottom: 1px solid var(--border);
+            font-size: 0.875rem;
+            font-weight: 600;
+            color: var(--text-primary);
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .chat-messages {
+            flex: 1;
+            padding: 1.5rem;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 1.25rem;
+        }
+
+        .msg {
+            max-width: 88%;
+            padding: 1rem 1.25rem;
+            border-radius: 6px;
+            font-size: 0.875rem;
+            line-height: 1.6;
+        }
+
+        .msg.ai {
+            align-self: flex-start;
+            background-color: var(--bg);
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+        }
+
+        .msg.ai p { margin-bottom: 0.75rem; }
+        .msg.ai p:last-child { margin-bottom: 0; }
+        .msg.ai strong, .msg.ai b { color: #ffffff; font-weight: 600; }
+        .msg.ai ul, .msg.ai ol { margin-left: 1.25rem; margin-bottom: 0.75rem; }
+        .msg.ai li { margin-bottom: 0.35rem; }
+        .msg.ai li:last-child { margin-bottom: 0; }
+        .msg.ai h1, .msg.ai h2, .msg.ai h3, .msg.ai h4 {
+            font-size: 0.95rem; font-weight: 600; margin-top: 0.5rem; margin-bottom: 0.5rem;
+            color: #ffffff; border-bottom: 1px solid var(--border); padding-bottom: 0.25rem;
+        }
+        .msg.ai h1:first-child, .msg.ai h2:first-child, .msg.ai h3:first-child, .msg.ai h4:first-child { margin-top: 0; }
+        .msg.ai code { background-color: var(--surface-hover); border: 1px solid var(--border); padding: 0.15rem 0.4rem; border-radius: 4px; font-size: 0.8rem; font-family: monospace; }
+
+        .msg.user {
+            align-self: flex-end;
+            background-color: var(--text-primary);
+            color: var(--bg);
+            font-weight: 500;
+            white-space: pre-wrap;
+        }
+
+        .chat-input-area {
+            padding: 1rem;
+            border-top: 1px solid var(--border);
+            display: flex;
+            gap: 0.5rem;
+            background-color: var(--surface);
+            border-radius: 0 0 8px 8px;
+        }
+
+        .chat-input {
+            flex: 1;
+            background-color: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 0.65rem 0.875rem;
+            color: var(--text-primary);
+            font-family: inherit;
+            font-size: 0.875rem;
+            outline: none;
+            transition: border-color 0.15s ease;
+        }
+
+        .chat-input:focus { border-color: var(--border-focus); }
+        .chat-input::placeholder { color: var(--text-tertiary); }
+
+        .send-btn {
+            background-color: var(--surface-hover);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+            padding: 0 1rem;
+            border-radius: 6px;
+            font-size: 0.875rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+
+        .send-btn:hover { background-color: var(--border); border-color: var(--border-focus); }
+    </style>
+</head>
+<body>
+
+<header>
+    <div class="title-area">
+        <h1>⚡ LangGraph Agentic Executive OS</h1>
+        <p>Physician Entrepreneur Command Center &bull; Multi-Agent Conditional Swarm</p>
+    </div>
+    <button id="runBtn" class="run-btn" onclick="runLangGraph()">
+        <span>⚡ Run Agentic Workflow</span>
+    </button>
+</header>
+
+<div class="pipeline-box">
+    <div class="pipeline-header">
+        <span>5-Agent Conditional Execution Swarm</span>
+        <span id="routeBadge" style="color: #00ffaa; font-weight: normal;">Route: Collaborative LangGraph OS</span>
+    </div>
+    <div class="nodes-grid">
+        <div id="node-fetch" class="node-item">
+            <div class="node-title">1. Ingestion Agent</div>
+            <div class="node-desc">Google OAuth / Gmail API</div>
+        </div>
+        <div class="arrow-sep">&rarr;</div>
+        <div id="node-triage" class="node-item">
+            <div class="node-title">2. Triage Router</div>
+            <div class="node-desc">SQLAlchemy DB Audit</div>
+        </div>
+        <div class="arrow-sep">&rarr;</div>
+        <div id="node-analysis" class="node-item">
+            <div class="node-title">3. Deep Analyst Agent</div>
+            <div class="node-desc">Groq LLM Analysis</div>
+        </div>
+        <div class="arrow-sep">&rarr;</div>
+        <div id="node-draft" class="node-item">
+            <div class="node-title">4. Action Drafting</div>
+            <div class="node-desc">Recommended Actions</div>
+        </div>
+        <div class="arrow-sep">&rarr;</div>
+        <div id="node-brief" class="node-item">
+            <div class="node-title">5. Synthesis Agent</div>
+            <div class="node-desc">7-Pillar Brief</div>
+        </div>
+    </div>
+    <div class="status-bar">
+        <span id="statusText">Status: Idle. Connected to LangGraph Swarm on port 8000. Click "Run Agentic Workflow" to triage emails.</span>
+        <span style="color: var(--text-tertiary);">State: Collaborative Swarm OS</span>
+    </div>
+</div>
+
+<div class="main-grid">
+    <div class="brief-col">
+        <div class="section-card" style="border-color: #333333;">
+            <div class="section-title">
+                <span>🤖 Recommended Next Actions &amp; Deadlines</span>
+                <span style="font-size: 0.75rem; color: var(--text-secondary); font-weight: normal;">Ready to Dispatch</span>
+            </div>
+            <ul id="list-drafts" class="item-list">
+                <li class="item">
+                    <div class="item-content" style="color: var(--text-secondary);">
+                        No items loaded yet. Click "Run Agentic Workflow" to query database.
+                    </div>
+                </li>
+            </ul>
+        </div>
+
+        <div class="section-card">
+            <div class="section-title">
+                <span>Highest-Priority Work &amp; Risk Audits</span>
+                <span style="font-size: 0.75rem; color: var(--text-secondary); font-weight: normal;">Immediate Action</span>
+            </div>
+            <ul id="list-high" class="item-list">
+                <li class="item">
+                    <div class="item-content">
+                        No active priority items. Click "Run Agentic Workflow" to query database.
+                    </div>
+                </li>
+            </ul>
+        </div>
+
+        <div class="section-card">
+            <div class="section-title">
+                <span>Revenue-Impacting &amp; Practice Scaling</span>
+                <span style="font-size: 0.75rem; color: var(--text-secondary); font-weight: normal;">Financial Focus</span>
+            </div>
+            <ul id="list-rev" class="item-list">
+                <li class="item">
+                    <div class="item-content" style="color: var(--text-secondary);">
+                        Awaiting database extraction...
+                    </div>
+                </li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="chat-box">
+        <div class="chat-header">
+            <span>Conversational Copilot</span>
+            <span style="font-size: 0.75rem; color: var(--text-secondary); font-weight: normal;">Connected to Executive LLM</span>
+        </div>
+        <div id="chatMessages" class="chat-messages">
+            <div class="msg ai">
+                ### ⚡ Collaborative Swarm Activated
+                
+                Welcome! Your frontend dashboard is now **100% connected to the collaborative agentic backend** (port 8000).
+                
+                Click **"Run Agentic Workflow"** to fetch categorized emails from your database, or ask me any question about your inbox!
+            </div>
+        </div>
+        <div class="chat-input-area">
+            <input id="chatInput" type="text" class="chat-input" placeholder="Ask about emails, priorities, or risks in your database..." onkeydown="if(event.key==='Enter') sendChat()"/>
+            <button class="send-btn" onclick="sendChat()">Send</button>
+        </div>
+    </div>
+</div>
+
+<script>
+function formatReply(text) {
+    if (!text) return "";
+    if (typeof marked !== 'undefined') {
+        return marked.parse(text);
+    }
+    return text
+        .replace(/^### (.*$)/gim, '<h4>$1</h4>')
+        .replace(/^## (.*$)/gim, '<h3>$1</h3>')
+        .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+        .replace(/^- (.*$)/gim, '<ul><li>$1</li></ul>')
+        .replace(/\n\n/g, '<p></p>')
+        .replace(/\n/g, '<br>');
+}
+
+let authToken = localStorage.getItem('jwt_token') || '';
+
+async function getAuthToken() {
+    if (authToken) return authToken;
+    try {
+        let res = await fetch('/api/auth/login', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({username: 'admin', password: 'password123'})
+        });
+        if (!res.ok) {
+            res = await fetch('/api/auth/register', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({username: 'admin', password: 'password123'})
+            });
+        }
+        const data = await res.json();
+        if (data.token) {
+            authToken = data.token;
+            localStorage.setItem('jwt_token', authToken);
+            return authToken;
+        }
+    } catch(e) {
+        console.error('Auth error', e);
+    }
+    return '';
+}
+
+async function runLangGraph() {
+    const btn = document.getElementById('runBtn');
+    const status = document.getElementById('statusText');
+    const badge = document.getElementById('routeBadge');
+    btn.disabled = true;
+    btn.innerHTML = '<span>⚡ Swarm Executing...</span>';
+    
+    document.querySelectorAll('.node-item').forEach(n => n.classList.remove('active', 'cond-active'));
+    document.getElementById('node-fetch').classList.add('active');
+    status.innerText = 'Status: [Agent 1] Authenticating with LangGraph API...';
+
+    try {
+        const token = await getAuthToken();
+        const headers = {'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json'};
+        
+        document.getElementById('node-triage').classList.add('active');
+        status.innerText = 'Status: Checking linked Google accounts & querying email database...';
+
+        const accRes = await fetch('/api/accounts', {headers});
+        const accData = await accRes.json();
+        
+        if (accData.accounts && accData.accounts.length > 0) {
+            const googleId = accData.accounts[0].google_id;
+            status.innerText = 'Status: Running LangGraph Agent Workflow for ' + googleId + '...';
+            await fetch('/api/agent/run', {
+                method: 'POST',
+                headers,
+                body: JSON.stringify({google_id: googleId})
+            });
+            await new Promise(r => setTimeout(r, 1500));
+        }
+
+        document.getElementById('node-analysis').classList.add('active');
+        document.getElementById('node-draft').classList.add('active');
+        document.getElementById('node-brief').classList.add('active');
+        
+        status.innerText = 'Status: Fetching categorized emails from database...';
+        const mailRes = await fetch('/api/mails', {headers});
+        const mailData = await mailRes.json();
+        
+        const mails = mailData.mails || [];
+        status.innerText = 'Status: Swarm Completed! Loaded ' + mails.length + ' categorized emails from LangGraph backend.';
+        badge.innerText = 'Route: COLLABORATIVE BACKEND';
+        badge.style.color = '#00ffaa';
+
+        renderBrief(mails);
+    } catch (err) {
+        status.innerText = 'Error: ' + err.message;
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<span>⚡ Run Agentic Workflow</span>';
+    }
+}
+
+function renderBrief(mails) {
+    const draftsList = document.getElementById('list-drafts');
+    const drafts = mails.filter(m => m.category === 'Recommended-next-actions' || m.category === 'Items-waiting-on-others' || m.category === 'Upcoming-deadlines');
+    draftsList.innerHTML = drafts.map(d => `
+        <li class="item">
+            <div>
+                <div class="item-content" style="font-weight: 500;">${d.subject || 'No Subject'}</div>
+                <div class="item-meta">Category: ${d.category} &bull; ID: ${d.mail_id || ''}</div>
+                <div style="font-size: 0.75rem; color: #aaa; margin-top: 0.5rem; font-style: italic; border-left: 2px solid #444; padding-left: 0.5rem;">"${(d.summary || d.snippet || '').slice(0, 150)}..."</div>
+            </div>
+            <span class="tag draft">${d.category.toUpperCase()}</span>
+        </li>
+    `).join('') || `<li class="item"><div class="item-content" style="color: var(--text-secondary);">No action items found in database.</div></li>`;
+
+    const highList = document.getElementById('list-high');
+    const high = mails.filter(m => m.category === 'Highest-priority-work' || m.category === 'Risks' || m.category === 'Decisions-requiring-attention' || m.category === 'Uncategorized');
+    highList.innerHTML = high.map(t => `
+        <li class="item">
+            <div>
+                <div class="item-content" style="font-weight: 500;">${t.subject || 'No Subject'}</div>
+                <div class="item-meta">Category: ${t.category}</div>
+                <div style="font-size: 0.75rem; color: #ccc; margin-top: 0.25rem;">${t.summary || t.snippet || ''}</div>
+            </div>
+            <span class="tag high">${t.category === 'Risks' ? 'RISK' : 'PRIORITY'}</span>
+        </li>
+    `).join('') || `<li class="item"><div class="item-content" style="color: var(--text-secondary);">No immediate priority alerts in database.</div></li>`;
+
+    const revList = document.getElementById('list-rev');
+    const rev = mails.filter(m => m.category === 'Revenue-impacting-items');
+    revList.innerHTML = rev.map(t => `
+        <li class="item">
+            <div>
+                <div class="item-content" style="font-weight: 500;">${t.subject || 'No Subject'}</div>
+                <div class="item-meta">Category: Revenue Impacting</div>
+                <div style="font-size: 0.75rem; color: #ccc; margin-top: 0.25rem;">${t.summary || t.snippet || ''}</div>
+            </div>
+            <span class="tag">REVENUE</span>
+        </li>
+    `).join('') || `<li class="item"><div class="item-content" style="color: var(--text-secondary);">No revenue items detected in database.</div></li>`;
+}
+
+async function sendChat() {
+    const inp = document.getElementById('chatInput');
+    const box = document.getElementById('chatMessages');
+    const text = inp.value.trim();
+    if (!text) return;
+
+    inp.value = '';
+    box.innerHTML += `<div class="msg user">${text}</div>`;
+    box.scrollTop = box.scrollHeight;
+
+    try {
+        const token = await getAuthToken();
+        const res = await fetch('/api/copilot-chat', {
+            method: 'POST',
+            headers: {'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json'},
+            body: JSON.stringify({query: text})
+        });
+        const data = await res.json();
+        const formatted = formatReply(data.reply || "");
+        box.innerHTML += `<div class="msg ai">${formatted}</div>`;
+        box.scrollTop = box.scrollHeight;
+    } catch(e) {
+        box.innerHTML += `<div class="msg ai" style="color: #ff5555;">Error connecting to copilot server: ${e.message}</div>`;
+    }
+}
+</script>
+</body>
+</html>

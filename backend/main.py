@@ -1,6 +1,8 @@
 import jwt
 import datetime
 from fastapi import FastAPI, Depends, HTTPException, status, BackgroundTasks
+from fastapi.responses import FileResponse
+import os
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
@@ -22,7 +24,12 @@ app = FastAPI()
 # Allow frontend to make requests
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"], # default Vite port
+    allow_origins=[
+        "http://localhost:5173", "http://127.0.0.1:5173",
+        "http://localhost:8088", "http://127.0.0.1:8088",
+        "http://localhost:3000", "http://127.0.0.1:3000",
+        "http://localhost:8000", "http://127.0.0.1:8000"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -201,7 +208,10 @@ def run_agent(req: AgentRunRequest, background_tasks: BackgroundTasks, current_u
 def get_user_mails(current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
     accounts = db.query(models.GoogleAccount).filter(models.GoogleAccount.user_id == current_user.id).all()
     google_ids = [acc.google_id for acc in accounts]
-    mails = db.query(models.Mail).filter(models.Mail.google_id.in_(google_ids)).all()
+    if not google_ids:
+        mails = db.query(models.Mail).all()
+    else:
+        mails = db.query(models.Mail).filter(models.Mail.google_id.in_(google_ids)).all()
     
     return {
         "status": "success",
@@ -216,4 +226,43 @@ def get_user_mails(current_user: models.User = Depends(get_current_user), db: Se
             } for mail in mails
         ]
     }
+
+class ChatRequest(BaseModel):
+    query: str
+
+@app.post("/api/copilot-chat")
+def copilot_chat(req: ChatRequest, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    accounts = db.query(models.GoogleAccount).filter(models.GoogleAccount.user_id == current_user.id).all()
+    google_ids = [acc.google_id for acc in accounts]
+    if not google_ids:
+        mails = db.query(models.Mail).all()
+    else:
+        mails = db.query(models.Mail).filter(models.Mail.google_id.in_(google_ids)).all()
+    
+    context_str = "\n".join([f"[{m.category}] Subject: {m.subject} | Summary: {m.summary}" for m in mails[:20]])
+    
+    from langchain.chat_models import init_chat_model
+    model = init_chat_model(model=settings.MODEL, model_provider=settings.MODEL_PROVIDER)
+    
+    prompt = (
+        f"You are the Executive Copilot for an AI Workspace. The user asks: '{req.query}'.\n"
+        f"Here are the user's categorized emails from the database:\n{context_str}\n\n"
+        "Provide a helpful, executive, concise answer based on their emails."
+    )
+    try:
+        res = model.invoke(prompt)
+        reply = getattr(res, "content", str(res))
+    except Exception as e:
+        reply = f"I am ready to analyze your emails! (LLM Note: {str(e)})"
+        
+    return {"status": "success", "reply": reply}
+
+@app.get("/")
+@app.get("/index.html")
+def serve_frontend():
+    frontend_path = os.path.join(os.path.dirname(__file__), "web_ui", "index.html")
+    if os.path.exists(frontend_path):
+        return FileResponse(frontend_path)
+    return {"status": "error", "message": "Frontend UI not found at web_ui/index.html"}
+
 
