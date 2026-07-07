@@ -19,6 +19,21 @@ from db import models
 # Create database tables
 models.Base.metadata.create_all(bind=engine)
 
+def ensure_default_user():
+    db = SessionLocal()
+    try:
+        if db.query(models.User).count() == 0:
+            default_user = models.User(
+                username="admin",
+                hashed_password=bcrypt.hashpw("password123".encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+            )
+            db.add(default_user)
+            db.commit()
+    finally:
+        db.close()
+
+ensure_default_user()
+
 app = FastAPI()
 
 # Allow frontend to make requests

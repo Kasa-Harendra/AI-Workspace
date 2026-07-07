@@ -550,8 +550,8 @@ function formatReply(text) {
 let authToken = localStorage.getItem('jwt_token') || '';
 let linkedGoogleId = '';
 
-async function getAuthToken() {
-    if (authToken) return authToken;
+async function getAuthToken(forceRefresh = false) {
+    if (authToken && !forceRefresh) return authToken;
     try {
         let res = await fetch('/api/auth/login', {
             method: 'POST',
@@ -577,6 +577,25 @@ async function getAuthToken() {
     return '';
 }
 
+async function apiFetch(url, options = {}) {
+    let token = await getAuthToken();
+    options.headers = options.headers || {};
+    options.headers['Authorization'] = 'Bearer ' + token;
+    if (options.body && !options.headers['Content-Type']) {
+        options.headers['Content-Type'] = 'application/json';
+    }
+    
+    let res = await fetch(url, options);
+    if (res.status === 401 || res.status === 404) {
+        localStorage.removeItem('jwt_token');
+        authToken = '';
+        token = await getAuthToken(true);
+        options.headers['Authorization'] = 'Bearer ' + token;
+        res = await fetch(url, options);
+    }
+    return res;
+}
+
 async function checkGoogleStatus() {
     const dot = document.getElementById('statusDot');
     const txt = document.getElementById('googleStatusText');
@@ -584,10 +603,7 @@ async function checkGoogleStatus() {
     const status = document.getElementById('statusText');
     
     try {
-        const token = await getAuthToken();
-        const res = await fetch('/api/accounts', {
-            headers: {'Authorization': 'Bearer ' + token}
-        });
+        const res = await apiFetch('/api/accounts');
         const data = await res.json();
         
         if (data.accounts && data.accounts.length > 0) {
@@ -597,7 +613,6 @@ async function checkGoogleStatus() {
             btn.innerHTML = '<span style="color: #10b981;">✓ Gmail Linked</span>';
             status.innerText = 'Status: Idle. Google Mail linked (' + (data.accounts[0].email || linkedGoogleId) + '). Click "Run Agentic Workflow" to triage inbox.';
             
-            // Fetch mails if already linked
             fetchMails();
         } else {
             linkedGoogleId = '';
@@ -617,10 +632,8 @@ async function linkGoogleMail() {
     status.innerText = 'Status: Opening Google Mail OAuth window... Please complete authentication in browser.';
     
     try {
-        const token = await getAuthToken();
-        const res = await fetch('/api/auth/link-google', {
-            method: 'POST',
-            headers: {'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json'}
+        const res = await apiFetch('/api/auth/link-google', {
+            method: 'POST'
         });
         const data = await res.json();
         
@@ -640,10 +653,7 @@ async function linkGoogleMail() {
 async function fetchMails() {
     if (!linkedGoogleId) return;
     try {
-        const token = await getAuthToken();
-        const mailRes = await fetch('/api/mails', {
-            headers: {'Authorization': 'Bearer ' + token}
-        });
+        const mailRes = await apiFetch('/api/mails');
         const mailData = await mailRes.json();
         if (mailData.mails) {
             renderBrief(mailData.mails);
@@ -670,15 +680,11 @@ async function runLangGraph() {
     status.innerText = 'Status: [Agent 1] Authenticating with Google Gmail API...';
 
     try {
-        const token = await getAuthToken();
-        const headers = {'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json'};
-        
         document.getElementById('node-triage').classList.add('active');
         status.innerText = 'Status: Connecting to live Gmail inbox for ' + linkedGoogleId + '...';
 
-        await fetch('/api/agent/run', {
+        await apiFetch('/api/agent/run', {
             method: 'POST',
-            headers,
             body: JSON.stringify({google_id: linkedGoogleId})
         });
         await new Promise(r => setTimeout(r, 2000));
@@ -688,7 +694,7 @@ async function runLangGraph() {
         document.getElementById('node-brief').classList.add('active');
         
         status.innerText = 'Status: Fetching newly classified emails from database...';
-        const mailRes = await fetch('/api/mails', {headers});
+        const mailRes = await apiFetch('/api/mails');
         const mailData = await mailRes.json();
         
         const mails = mailData.mails || [];
@@ -766,10 +772,8 @@ async function sendChat() {
     messages.scrollTop = messages.scrollHeight;
 
     try {
-        const token = await getAuthToken();
-        const res = await fetch('/api/copilot-chat', {
+        const res = await apiFetch('/api/copilot-chat', {
             method: 'POST',
-            headers: {'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json'},
             body: JSON.stringify({query: text})
         });
         const data = await res.json();
