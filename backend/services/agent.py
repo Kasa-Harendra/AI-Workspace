@@ -88,7 +88,7 @@ def get_mails(state: GmailState):
     state["mails"] = []
     
     # Process up to a reasonable limit so we don't blow through API limits
-    for mail in mail_ids[:50]:
+    for mail in mail_ids[:15]:  # 15 emails fits within Groq free tier TPM limits
         response = service.users().messages().get(userId="me", id=mail["id"]).execute()
         headers = response["payload"]["headers"]
         required_headers = {"To", "Date", "Subject", "From"}
@@ -140,35 +140,77 @@ def create_summaries(state: GmailState):
     model = model.with_structured_output(MailSummary)
 
     state["outputs"] = []
-    
-    for message in state["mails"]:
-        prompt = (
-            "You are an expert email analyzer. Your task is to accurately categorize the given email "
-            "and provide a strictly concise summary of exactly the main content. "
-            "Do NOT deviate from the context of the email. Keep the summary to approximately 50 words.\n\n"
-            f"Email Data:\n{json.dumps(message)}"
-        )
-        response = model.invoke(prompt)
-        if not response:
-            continue
-        
-        if hasattr(response, 'model_dump'):
-            response_dict = response.model_dump()
-        else:
-            response_dict = response if isinstance(response, dict) else {}
+    db = SessionLocal()
+    try:
+        for message in state["mails"]:
+            # Skip if already saved from a previous run
+            existing = db.query(Mail).filter(
+                Mail.google_id == state["google_id"],
+                Mail.mail_id == message["id"]
+            ).first()
+            if existing:
+                logger.info(f"Email {message['id']} already in DB, skipping.")
+                continue
 
-        cat = response_dict.get("category", "")
-        res = {
-            "id": message["id"],
-            "labelIds": message.get("labelIds", []),
-            "headers": message["headers"],
-            "snippet": message.get("snippet", ""),
-            "summary": response_dict.get("summary", ""),
-            "category": getattr(cat, 'value', str(cat)) if cat else "Uncategorized"
-        }
-        state["outputs"].append(res)
+            prompt = (
+                "You are an expert email analyzer. Categorize the given email into EXACTLY ONE of these 7 categories:\n"
+                "- Highest-priority-work\n"
+                "- Revenue-impacting-items\n"
+                "- Items-waiting-on-others\n"
+                "- Decisions-requiring-attention\n"
+                "- Upcoming-deadlines\n"
+                "- Risks\n"
+                "- Recommended-next-actions\n\n"
+                "You MUST pick one of those exact 7 strings as the category. "
+                "Also provide a concise 50-word summary of the email content.\n\n"
+                f"Subject: {message['headers'].get('Subject', 'No Subject')}\n"
+                f"Snippet: {message.get('snippet', '')}\n"
+            )
+            response = None
+            for attempt in range(3):
+                try:
+                    response = model.invoke(prompt)
+                    break
+                except Exception as e:
+                    logger.warning(f"LLM invoke failed (attempt {attempt+1}): {e}. Sleeping 10s...")
+                    time.sleep(10)
 
-    logger.info(f"Node 'create_summaries': Summarized {len(state['outputs'])} emails.")
+            if not response:
+                response_dict = {"category": "Recommended-next-actions", "summary": message.get("snippet", "")}
+            elif hasattr(response, 'model_dump'):
+                response_dict = response.model_dump()
+            else:
+                response_dict = response if isinstance(response, dict) else {}
+
+            cat = response_dict.get("category", "")
+            category_str = getattr(cat, 'value', str(cat)) if cat else "Recommended-next-actions"
+
+            # Save to DB immediately after each email is processed
+            new_mail = Mail(
+                mail_id=message["id"],
+                google_id=state["google_id"],
+                snippet=message.get("snippet", "") or "",
+                subject=message["headers"].get("Subject", "") or "",
+                summary=response_dict.get("summary", "") or "",
+                category=category_str
+            )
+            db.add(new_mail)
+            db.commit()
+            logger.info(f"Saved email {message['id']} with category '{category_str}'")
+
+            res = {
+                "id": message["id"],
+                "headers": message["headers"],
+                "snippet": message.get("snippet", ""),
+                "summary": response_dict.get("summary", ""),
+                "category": category_str
+            }
+            state["outputs"].append(res)
+            time.sleep(2)  # 2s pacing between emails
+    finally:
+        db.close()
+
+    logger.info(f"Node 'create_summaries': Summarized and saved {len(state['outputs'])} emails.")
     return state
 
 def save_to_db(state: GmailState):

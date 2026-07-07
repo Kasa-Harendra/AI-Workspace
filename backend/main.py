@@ -3,6 +3,8 @@ import datetime
 from fastapi import FastAPI, Depends, HTTPException, status, BackgroundTasks
 from fastapi.responses import FileResponse
 import os
+os.environ['OAUTHLIB_RELAX_TOKEN_SCOPE'] = '1'
+os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
@@ -219,35 +221,93 @@ def run_agent(req: AgentRunRequest, background_tasks: BackgroundTasks, current_u
     background_tasks.add_task(run_agent_workflow, req.google_id)
     return {"status": "success", "message": "Agent execution started in the background"}
 
+oauth_verifier_store = {}
+latest_code_verifier = {"verifier": None}
+
+@app.get("/api/auth/google-url")
 @app.post("/api/auth/link-google")
-def link_google_account(current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+def get_google_auth_url():
     try:
-        from services.authentication import authenticate_google_workspace
-        creds = authenticate_google_workspace()
+        from google_auth_oauthlib.flow import InstalledAppFlow
+        from services.authentication import SCOPES
+        import os
+        cred_path = 'credentials.json'
+        if not os.path.exists(cred_path):
+            cred_path = '../credentials.json'
+        flow = InstalledAppFlow.from_client_secrets_file(cred_path, SCOPES)
+        flow.redirect_uri = 'http://localhost:8000/api/auth/callback'
+        auth_url, state = flow.authorization_url(prompt='consent', access_type='offline')
+        
+        verifier = getattr(flow, 'code_verifier', None)
+        if verifier:
+            oauth_verifier_store[state] = verifier
+            latest_code_verifier["verifier"] = verifier
+            
+        return {"status": "url", "url": auth_url}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate Google auth URL: {str(e)}")
+
+@app.get("/api/auth/callback")
+def auth_callback(state: str = None, code: str = None, error: str = None, db: Session = Depends(get_db)):
+    from starlette.responses import RedirectResponse, HTMLResponse
+    if error or not code:
+        return HTMLResponse("<h3>Authentication failed or canceled. Please close this window and try again.</h3>", status_code=400)
+    try:
+        from google_auth_oauthlib.flow import InstalledAppFlow
+        from services.authentication import SCOPES
         from googleapiclient.discovery import build
+        import os
+        
+        cred_path = 'credentials.json'
+        if not os.path.exists(cred_path):
+            cred_path = '../credentials.json'
+            
+        flow = InstalledAppFlow.from_client_secrets_file(cred_path, SCOPES)
+        flow.redirect_uri = 'http://localhost:8000/api/auth/callback'
+        
+        verifier = oauth_verifier_store.get(state) or latest_code_verifier["verifier"]
+        if verifier:
+            flow.code_verifier = verifier
+            
+        flow.fetch_token(code=code)
+        creds = flow.credentials
+        
+        with open('token.json', 'w') as token:
+            token.write(creds.to_json())
+            
         service = build("gmail", "v1", credentials=creds)
         profile = service.users().getProfile(userId='me').execute()
         email = profile['emailAddress']
         google_id = profile.get('emailAddress')
         
+        user = db.query(models.User).first()
+        user_id = user.id if user else 1
+        
         account = db.query(models.GoogleAccount).filter(models.GoogleAccount.email == email).first()
         if not account:
             account = models.GoogleAccount(
                 google_id=google_id,
-                user_id=current_user.id,
+                user_id=user_id,
                 name=email,
                 email=email,
                 refresh_token=creds.refresh_token or ""
             )
             db.add(account)
         else:
-            account.user_id = current_user.id
+            account.user_id = user_id
             if creds.refresh_token:
                 account.refresh_token = creds.refresh_token
         db.commit()
-        return {"status": "success", "email": email, "google_id": google_id}
+        
+        return RedirectResponse(url="/")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to authenticate with Google: {str(e)}")
+        import traceback, html
+        tb = traceback.format_exc()
+        print("AUTH CALLBACK ERROR:\n", tb)
+        safe_error = html.escape(repr(e))
+        safe_tb = html.escape(tb)
+        return HTMLResponse(f"<h3>Error linking account: {safe_error}</h3><pre style='background:#f4f4f4;padding:15px;border:1px solid #ccc;text-align:left;overflow:auto;'>{safe_tb}</pre>", status_code=500)
+
 
 @app.get("/api/mails")
 def get_user_mails(current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -305,7 +365,11 @@ def copilot_chat(req: ChatRequest, current_user: models.User = Depends(get_curre
 def serve_frontend():
     frontend_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend", "index.html")
     if os.path.exists(frontend_path):
-        return FileResponse(frontend_path)
+        return FileResponse(frontend_path, headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0"
+        })
     return {"status": "error", "message": "Frontend UI not found at frontend/index.html"}
 
 

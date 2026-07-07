@@ -1,5 +1,9 @@
 import os.path
 import base64
+import os
+
+os.environ['OAUTHLIB_RELAX_TOKEN_SCOPE'] = '1'
+os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -11,8 +15,8 @@ from settings import settings
 
 SCOPES = [
     'openid',
-    'email',
-    'profile',
+    'https://www.googleapis.com/auth/userinfo.email',
+    'https://www.googleapis.com/auth/userinfo.profile',
     'https://www.googleapis.com/auth/gmail.modify',
     'https://www.googleapis.com/auth/drive',      # Full access to Drive
     'https://www.googleapis.com/auth/documents',  # Full access to Docs
@@ -76,6 +80,18 @@ def get_creds_from_refresh_token(refresh_token: str) -> Credentials:
     # Best Practice: Load these from environment variables or a secret manager
     CLIENT_ID = settings.CLIENT_ID
     CLIENT_SECRET = settings.CLIENT_SECRET
+    if not CLIENT_ID or CLIENT_ID == "your_google_client_id_here":
+        possible_paths = ['credentials.json', '../credentials.json', 'secrets/credentials.json', '../secrets/credentials.json']
+        for p in possible_paths:
+            if os.path.exists(p):
+                import json
+                with open(p, 'r') as f:
+                    data = json.load(f)
+                    cred_info = data.get('installed') or data.get('web') or {}
+                    CLIENT_ID = cred_info.get('client_id', CLIENT_ID)
+                    CLIENT_SECRET = cred_info.get('client_secret', CLIENT_SECRET)
+                break
+
     REFRESH_TOKEN = refresh_token
     
     # The standard Google endpoint for token exchanges

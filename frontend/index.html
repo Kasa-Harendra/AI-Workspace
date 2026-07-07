@@ -629,19 +629,19 @@ async function checkGoogleStatus() {
 
 async function linkGoogleMail() {
     const status = document.getElementById('statusText');
-    status.innerText = 'Status: Opening Google Mail OAuth window... Please complete authentication in browser.';
+    status.innerText = 'Status: Redirecting to Google Mail sign-in page...';
     
     try {
-        const res = await apiFetch('/api/auth/link-google', {
-            method: 'POST'
-        });
+        const res = await apiFetch('/api/auth/google-url');
         const data = await res.json();
         
-        if (data.status === 'success') {
+        if (data.url) {
+            window.location.href = data.url;
+        } else if (data.status === 'success') {
             status.innerText = 'Status: Successfully connected Google Mail account: ' + data.email;
             checkGoogleStatus();
         } else {
-            alert('Could not link Google Mail: ' + (data.detail || data.message || 'Unknown error'));
+            alert('Could not get Google sign-in URL: ' + (data.detail || data.message || 'Unknown error'));
             status.innerText = 'Status: Google Mail sign-in failed or canceled.';
         }
     } catch(e) {
@@ -687,22 +687,45 @@ async function runLangGraph() {
             method: 'POST',
             body: JSON.stringify({google_id: linkedGoogleId})
         });
-        await new Promise(r => setTimeout(r, 2000));
 
+        // Poll every 5 seconds for up to 6 minutes, keep updating UI as emails arrive
         document.getElementById('node-analysis').classList.add('active');
-        document.getElementById('node-draft').classList.add('active');
-        document.getElementById('node-brief').classList.add('active');
+        let mails = [];
+        let stableCount = 0;
+        let lastCount = -1;
+        const maxAttempts = 72; // 72 × 5s = 6 minutes
+        for (let attempt = 0; attempt < maxAttempts; attempt++) {
+            await new Promise(r => setTimeout(r, 5000));
+            
+            const mailRes = await apiFetch('/api/mails');
+            const mailData = await mailRes.json();
+            mails = mailData.mails || [];
+            
+            const secondsLeft = (maxAttempts - attempt) * 5;
+            status.innerText = `Status: 🤖 AI Swarm running... ${mails.length} emails classified so far (checking for more, ${secondsLeft}s remaining)`;
+            
+            // Update dashboard live as emails come in
+            if (mails.length > 0) {
+                renderBrief(mails);
+                document.getElementById('node-draft').classList.add('active');
+                document.getElementById('node-brief').classList.add('active');
+            }
+
+            // Stop when count hasn't changed for 2 consecutive checks (agent finished)
+            if (mails.length > 0 && mails.length === lastCount) {
+                stableCount++;
+                if (stableCount >= 2) break;
+            } else {
+                stableCount = 0;
+            }
+            lastCount = mails.length;
+        }
         
-        status.innerText = 'Status: Fetching newly classified emails from database...';
-        const mailRes = await apiFetch('/api/mails');
-        const mailData = await mailRes.json();
-        
-        const mails = mailData.mails || [];
         status.innerText = 'Status: Swarm Completed! Loaded ' + mails.length + ' live classified emails from Gmail.';
         badge.innerText = 'Route: LIVE GMAIL INTEGRATION';
         badge.style.color = '#00ffaa';
-
         renderBrief(mails);
+
     } catch (err) {
         status.innerText = 'Error: ' + err.message;
     } finally {
