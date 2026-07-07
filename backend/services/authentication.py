@@ -32,8 +32,35 @@ def authenticate_google_workspace():
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
-            flow = InstalledAppFlow.from_client_secrets_file(
-                '../secrets/credentials.json', SCOPES)
+            possible_paths = [
+                'credentials.json',
+                '../credentials.json',
+                'secrets/credentials.json',
+                '../secrets/credentials.json'
+            ]
+            cred_path = None
+            for p in possible_paths:
+                if os.path.exists(p):
+                    cred_path = p
+                    break
+            
+            if cred_path:
+                flow = InstalledAppFlow.from_client_secrets_file(cred_path, SCOPES)
+            elif settings.CLIENT_ID and settings.CLIENT_ID != "your_google_client_id_here" and settings.CLIENT_SECRET and settings.CLIENT_SECRET != "your_google_client_secret_here":
+                client_config = {
+                    "installed": {
+                        "client_id": settings.CLIENT_ID,
+                        "client_secret": settings.CLIENT_SECRET,
+                        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                        "token_uri": "https://oauth2.googleapis.com/token",
+                        "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+                        "redirect_uris": ["http://localhost"]
+                    }
+                }
+                flow = InstalledAppFlow.from_client_config(client_config, SCOPES)
+            else:
+                raise Exception("Google OAuth credentials not found! Please download 'credentials.json' from your Google Cloud Console (APIs & Services -> Credentials -> OAuth 2.0 Client IDs for Desktop App) and place it in the 'backend' folder, OR set your CLIENT_ID and CLIENT_SECRET in 'backend/.env'.")
+                
             creds = flow.run_local_server(port=0)
         # Save the credentials for the next run
         with open('token.json', 'w') as token:
