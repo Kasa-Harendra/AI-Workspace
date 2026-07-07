@@ -1,0 +1,19 @@
+# Environments & Secrets
+.env
+*.env
+token.json
+credentials.json
+secrets/
+
+# Database & Logs
+*.db
+*.log
+agent_graph.log
+ai_workspace.db*
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/

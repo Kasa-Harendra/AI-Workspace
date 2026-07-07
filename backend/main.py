@@ -204,15 +204,44 @@ def run_agent(req: AgentRunRequest, background_tasks: BackgroundTasks, current_u
     background_tasks.add_task(run_agent_workflow, req.google_id)
     return {"status": "success", "message": "Agent execution started in the background"}
 
+@app.post("/api/auth/link-google")
+def link_google_account(current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    try:
+        from services.authentication import authenticate_google_workspace
+        creds = authenticate_google_workspace()
+        from googleapiclient.discovery import build
+        service = build("gmail", "v1", credentials=creds)
+        profile = service.users().getProfile(userId='me').execute()
+        email = profile['emailAddress']
+        google_id = profile.get('emailAddress')
+        
+        account = db.query(models.GoogleAccount).filter(models.GoogleAccount.email == email).first()
+        if not account:
+            account = models.GoogleAccount(
+                google_id=google_id,
+                user_id=current_user.id,
+                name=email,
+                email=email,
+                refresh_token=creds.refresh_token or ""
+            )
+            db.add(account)
+        else:
+            account.user_id = current_user.id
+            if creds.refresh_token:
+                account.refresh_token = creds.refresh_token
+        db.commit()
+        return {"status": "success", "email": email, "google_id": google_id}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to authenticate with Google: {str(e)}")
+
 @app.get("/api/mails")
 def get_user_mails(current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
     accounts = db.query(models.GoogleAccount).filter(models.GoogleAccount.user_id == current_user.id).all()
     google_ids = [acc.google_id for acc in accounts]
     if not google_ids:
-        mails = db.query(models.Mail).all()
-    else:
-        mails = db.query(models.Mail).filter(models.Mail.google_id.in_(google_ids)).all()
+        return {"status": "success", "mails": [], "message": "No Google Mail account linked"}
     
+    mails = db.query(models.Mail).filter(models.Mail.google_id.in_(google_ids)).all()
     return {
         "status": "success",
         "mails": [
@@ -235,10 +264,9 @@ def copilot_chat(req: ChatRequest, current_user: models.User = Depends(get_curre
     accounts = db.query(models.GoogleAccount).filter(models.GoogleAccount.user_id == current_user.id).all()
     google_ids = [acc.google_id for acc in accounts]
     if not google_ids:
-        mails = db.query(models.Mail).all()
-    else:
-        mails = db.query(models.Mail).filter(models.Mail.google_id.in_(google_ids)).all()
+        return {"status": "error", "reply": "⚠️ Please click 'Sign in with Google Mail' first to analyze your inbox."}
     
+    mails = db.query(models.Mail).filter(models.Mail.google_id.in_(google_ids)).all()
     context_str = "\n".join([f"[{m.category}] Subject: {m.subject} | Summary: {m.summary}" for m in mails[:20]])
     
     from langchain.chat_models import init_chat_model
@@ -260,9 +288,9 @@ def copilot_chat(req: ChatRequest, current_user: models.User = Depends(get_curre
 @app.get("/")
 @app.get("/index.html")
 def serve_frontend():
-    frontend_path = os.path.join(os.path.dirname(__file__), "web_ui", "index.html")
+    frontend_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend", "index.html")
     if os.path.exists(frontend_path):
         return FileResponse(frontend_path)
-    return {"status": "error", "message": "Frontend UI not found at web_ui/index.html"}
+    return {"status": "error", "message": "Frontend UI not found at frontend/index.html"}
 
 
