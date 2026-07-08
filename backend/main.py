@@ -221,92 +221,7 @@ def run_agent(req: AgentRunRequest, background_tasks: BackgroundTasks, current_u
     background_tasks.add_task(run_agent_workflow, req.google_id)
     return {"status": "success", "message": "Agent execution started in the background"}
 
-oauth_verifier_store = {}
-latest_code_verifier = {"verifier": None}
 
-@app.get("/api/auth/google-url")
-@app.post("/api/auth/link-google")
-def get_google_auth_url():
-    try:
-        from google_auth_oauthlib.flow import InstalledAppFlow
-        from services.authentication import SCOPES
-        import os
-        cred_path = 'credentials.json'
-        if not os.path.exists(cred_path):
-            cred_path = '../credentials.json'
-        flow = InstalledAppFlow.from_client_secrets_file(cred_path, SCOPES)
-        flow.redirect_uri = 'http://localhost:8000/api/auth/callback'
-        auth_url, state = flow.authorization_url(prompt='consent', access_type='offline')
-        
-        verifier = getattr(flow, 'code_verifier', None)
-        if verifier:
-            oauth_verifier_store[state] = verifier
-            latest_code_verifier["verifier"] = verifier
-            
-        return {"status": "url", "url": auth_url}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to generate Google auth URL: {str(e)}")
-
-@app.get("/api/auth/callback")
-def auth_callback(state: str = None, code: str = None, error: str = None, db: Session = Depends(get_db)):
-    from starlette.responses import RedirectResponse, HTMLResponse
-    if error or not code:
-        return HTMLResponse("<h3>Authentication failed or canceled. Please close this window and try again.</h3>", status_code=400)
-    try:
-        from google_auth_oauthlib.flow import InstalledAppFlow
-        from services.authentication import SCOPES
-        from googleapiclient.discovery import build
-        import os
-        
-        cred_path = 'credentials.json'
-        if not os.path.exists(cred_path):
-            cred_path = '../credentials.json'
-            
-        flow = InstalledAppFlow.from_client_secrets_file(cred_path, SCOPES)
-        flow.redirect_uri = 'http://localhost:8000/api/auth/callback'
-        
-        verifier = oauth_verifier_store.get(state) or latest_code_verifier["verifier"]
-        if verifier:
-            flow.code_verifier = verifier
-            
-        flow.fetch_token(code=code)
-        creds = flow.credentials
-        
-        with open('token.json', 'w') as token:
-            token.write(creds.to_json())
-            
-        service = build("gmail", "v1", credentials=creds)
-        profile = service.users().getProfile(userId='me').execute()
-        email = profile['emailAddress']
-        google_id = profile.get('emailAddress')
-        
-        user = db.query(models.User).first()
-        user_id = user.id if user else 1
-        
-        account = db.query(models.GoogleAccount).filter(models.GoogleAccount.email == email).first()
-        if not account:
-            account = models.GoogleAccount(
-                google_id=google_id,
-                user_id=user_id,
-                name=email,
-                email=email,
-                refresh_token=creds.refresh_token or ""
-            )
-            db.add(account)
-        else:
-            account.user_id = user_id
-            if creds.refresh_token:
-                account.refresh_token = creds.refresh_token
-        db.commit()
-        
-        return RedirectResponse(url="/")
-    except Exception as e:
-        import traceback, html
-        tb = traceback.format_exc()
-        print("AUTH CALLBACK ERROR:\n", tb)
-        safe_error = html.escape(repr(e))
-        safe_tb = html.escape(tb)
-        return HTMLResponse(f"<h3>Error linking account: {safe_error}</h3><pre style='background:#f4f4f4;padding:15px;border:1px solid #ccc;text-align:left;overflow:auto;'>{safe_tb}</pre>", status_code=500)
 
 
 @app.get("/api/mails")
@@ -323,6 +238,7 @@ def get_user_mails(current_user: models.User = Depends(get_current_user), db: Se
             {
                 "mail_id": mail.mail_id,
                 "google_id": mail.google_id,
+                "email": mail.google_account.email if mail.google_account else "",
                 "snippet": mail.snippet,
                 "subject": mail.subject,
                 "summary": mail.summary,
@@ -334,31 +250,100 @@ def get_user_mails(current_user: models.User = Depends(get_current_user), db: Se
 class ChatRequest(BaseModel):
     query: str
 
-@app.post("/api/copilot-chat")
-def copilot_chat(req: ChatRequest, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+from fastapi.responses import StreamingResponse
+import json
+from langchain.agents import create_agent
+from langchain.chat_models import init_chat_model
+import sys
+
+# Add root directory to path to import gmail_toolkit
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from gmail_toolkit.client import GMailClient
+from gmail_toolkit.toolkit import GmailToolkit
+from langchain_core.messages import AIMessage, ToolMessage
+
+@app.post("/api/chat")
+def chat_endpoint(req: ChatRequest, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
     accounts = db.query(models.GoogleAccount).filter(models.GoogleAccount.user_id == current_user.id).all()
-    google_ids = [acc.google_id for acc in accounts]
-    if not google_ids:
-        return {"status": "error", "reply": "⚠️ Please click 'Sign in with Google Mail' first to analyze your inbox."}
+    if not accounts:
+        def error_stream():
+            yield f"data: {json.dumps({'type': 'error', 'content': '⚠️ Please click Sign in with Google Mail first.'})}\n\n"
+        return StreamingResponse(error_stream(), media_type="text/event-stream")
     
-    mails = db.query(models.Mail).filter(models.Mail.google_id.in_(google_ids)).all()
-    context_str = "\n".join([f"[{m.category}] Subject: {m.subject} | Summary: {m.summary}" for m in mails[:20]])
-    
-    from langchain.chat_models import init_chat_model
-    model = init_chat_model(model=settings.MODEL, model_provider=settings.MODEL_PROVIDER)
-    
-    prompt = (
-        f"You are the Executive Copilot for an AI Workspace. The user asks: '{req.query}'.\n"
-        f"Here are the user's categorized emails from the database:\n{context_str}\n\n"
-        "Provide a helpful, executive, concise answer based on their emails."
-    )
-    try:
-        res = model.invoke(prompt)
-        reply = getattr(res, "content", str(res))
-    except Exception as e:
-        reply = f"I am ready to analyze your emails! (LLM Note: {str(e)})"
+    clients = {}
+    account_emails = []
+    for acc in accounts:
+        try:
+            client = GMailClient.get_client_using_refresh_token(
+                client_id=settings.CLIENT_ID,
+                client_secret=settings.CLIENT_SECRET,
+                refresh_token=acc.refresh_token
+            )
+            clients[acc.email] = client
+            account_emails.append(acc.email)
+        except Exception as e:
+            print(f"Error initializing client for {acc.email}: {e}")
+            
+    if not clients:
+        def error_stream():
+            yield f"data: {json.dumps({'type': 'error', 'content': '⚠️ Failed to initialize Google API clients. Please re-authenticate.'})}\n\n"
+        return StreamingResponse(error_stream(), media_type="text/event-stream")
         
-    return {"status": "success", "reply": reply}
+    toolkit = GmailToolkit(clients=clients)
+    tools = toolkit.get_tools()
+    
+    llm = init_chat_model(model=settings.MODEL, model_provider=settings.MODEL_PROVIDER)
+    
+    system_prompt = (
+        "You are a helpful email assistant. You have access to a suite of Gmail tools.\n"
+        "You can manage emails for the following accounts:\n" + 
+        "\n".join([f"- {email}" for email in account_emails]) + "\n\n"
+        "CRITICAL: For every tool call, you MUST provide the `account_email` parameter specifying which account to perform the action in.\n"
+        "If the user asks to search or summarize across all accounts, use the tools for each account and aggregate the results.\n"
+    )
+    
+    agent = create_agent(llm, tools, system_prompt=system_prompt)
+    
+    def event_stream():
+        try:
+            for chunk in agent.stream({"messages": [("user", req.query)]}):
+                for node_name, state_update in chunk.items():
+                    if "messages" in state_update:
+                        messages = state_update["messages"]
+                        if not isinstance(messages, list):
+                            messages = [messages]
+                        
+                        for msg in messages:
+                            if isinstance(msg, AIMessage):
+                                content = msg.content
+                                text_to_render = ""
+                                if isinstance(content, str):
+                                    text_to_render = content
+                                elif isinstance(content, list):
+                                    for block in content:
+                                        if isinstance(block, dict):
+                                            if block.get("type") == "text":
+                                                text_to_render += block.get("text", "")
+                                            elif block.get("type") == "reasoning":
+                                                yield f"data: {json.dumps({'type': 'reasoning', 'content': block.get('reasoning', '')})}\n\n"
+                                
+                                if text_to_render.strip():
+                                    yield f"data: {json.dumps({'type': 'message', 'content': text_to_render})}\n\n"
+                                
+                                if getattr(msg, "tool_calls", None):
+                                    for tc in msg.tool_calls:
+                                        tool_info = f"Calling Tool: {tc.get('name')}({tc.get('args')})"
+                                        yield f"data: {json.dumps({'type': 'tool_call', 'content': tool_info})}\n\n"
+                                        
+                            elif isinstance(msg, ToolMessage):
+                                preview = str(msg.content)
+                                if len(preview) > 300:
+                                    preview = preview[:300] + "..."
+                                yield f"data: {json.dumps({'type': 'tool_result', 'name': msg.name, 'content': preview})}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
+            
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 @app.get("/")
 @app.get("/index.html")

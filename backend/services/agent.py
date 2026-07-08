@@ -77,9 +77,7 @@ def get_mails(state: GmailState):
     logger.info("Node 'get_mails': Fetching emails from Gmail API.")
     service = state["service"]
     if not state["first_run"]:
-        diff = datetime.datetime.now() - datetime.timedelta(hours=settings.SUBSEQUENT_RUN_HOURS)
-        unix_timestamp = int(time.mktime(diff.timetuple()))
-        result = service.users().messages().list(userId='me', q=f"after:{unix_timestamp}").execute()
+        result = service.users().messages().list(userId='me', q=f"newer_than:{settings.SUBSEQUENT_RUN_HOURS}").execute()
         mail_ids = result.get("messages", [])
     else:
         result = service.users().messages().list(userId='me', q=f"newer_than:{settings.FIRST_RUN_DAYS}").execute()
